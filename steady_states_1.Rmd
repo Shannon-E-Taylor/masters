@@ -1,0 +1,373 @@
+---
+title: "network-analysis"
+author: "ST"
+date: "5 May 2020"
+output:
+  pdf_document:
+    keep_tex: true
+---
+
+
+
+```{r setup, include=FALSE}
+library("BoolNet")
+```
+
+# ```{r global_options, include=FALSE}
+# knitr::opts_chunk$set(fig.width=12, fig.height=8, 
+#                       echo=FALSE, warning=FALSE, message=FALSE#, 
+#                       #results = FALSE
+#                       )
+# ```
+
+
+```{r}
+dros_network <- loadSBML("~/Downloads/ec2017models/journal.pbio.2002439.s012.sbml")
+plotNetworkWiring(dros_network)
+```
+
+
+# The early network doesn't work
+
+The early network attractor analysis isn't especially interesting: there are two attractors, each with two states (meaning the system cycles between these two states). These don't correspond to the cycles seen in Drosophila; probably because the RNA-protein gap (ie forward shifts of stripes) is critical to producing segmentation. 
+
+```{r}
+attr <- getAttractors(dros_network, genesON="Cad", genesOFF = "Opa")
+plotAttractors(attr)
+```
+
+I added this transcription translation gap, by adding another layer of regulation. Instead of `if G1==TRUE, Hairy = FALSE`, the Hairy regulatory logic becomes 
+
+` if G1==TRUE, hairy = FALSE` 
+
+` if hairy == TRUE, Hairy = TRUE`
+
+where hairy and Hairy are the RNA and protein species, respectively. 
+
+This still only leads to four stable states, not the required eight, so does not recapitulate the observed dynamics (which involve a cycle of 8 cells). 
+
+So structural analysis of the early network isn't giving us biologically meaningful results. 
+
+```{r}
+early_network <- loadNetwork("early_grn_transcription_gap")
+early_attr <- getAttractors(early_network)
+plotAttractors(early_attr)
+
+```
+
+
+# The late network does 
+
+Plotting the attractors of the late network reveals 9 attractors. Eight are stable (one state only); seven of these correspond to the seven stable states seen in the *Drosophila* pair rule network. Ftz-Prd-En is missing from the Drosophila simulation. 
+
+There is also a two-state attractor involving *Prd*. I think this is likely occuring because the regulation of *Prd* is not fully correct (Clark 2017). 
+
+This illustrates some important points. Specific inputs to the network must be constraining the outputs the network produces. Thus, the structure of the network is not the only factor determining which output states are observed. 
+
+
+```{r}
+attr <- getAttractors(dros_network, genesON="Opa", genesOFF = "Cad")
+
+grouping <- list(class = c("G1", "Hairy", "Opa", "Eve", "G2", "Runt", "Odd", "Ftz", "Prd", "Slp", "En", "Cad"), 
+                                                         index = c(1, 5, 4, 6, 2, 7, 8, 9, 10, 11, 12, 3))
+
+plotAttractors(attr)
+```
+
+We can plot the states leading to each attractor. 
+
+One is a "garden of eden" attractor - attractor 5 - ie En-Prd (it is not connected to any other states). What does this mean?
+
+Note also how branched and messy this graph is. There is not an obvious trajectory! 
+
+Does this state graph change if we input the Dros values? 
+
+```{r}
+
+#png(paste("attractors/state_graph", ".png", sep=""), width = w, height = h)
+
+plotStateGraph(attr, highlightAttractors = TRUE, colorBasins=TRUE, drawLegend = FALSE)
+
+#dev.off()
+
+
+```
+
+As expected, only the six steady states reached by the *Drosophila* simulation are reached when the simulation is initialized with inputs (at t=36- try t=35!) 
+
+
+```{r}
+#Genes are encoded in the following order: 
+#G1 Hairy Opa Eve G2 Runt Odd Ftz Prd Slp En Cad 
+start.states = list(
+  "011000111100", #Hairy Opa Odd Ftz Prd Slp 
+  "011000001100", #Hairy Prd Slp
+  "011100001100", #Hairy Eve Prd Slp
+  "001100000000", #Eve
+  "001001000000", #Runt
+  "001001111000", #Runt Odd Ftz Prd
+  "001000111000"  #Odd Ftz Prd
+)
+
+f <- function(s) {
+  list(as.numeric(unlist(strsplit(s, "" ))))
+  }
+start.states <- sapply(start.states, f)
+#start.states <- generateRandomStartStates(net, 2)
+
+attr.start.states <- getAttractors(dros_network, genesON="Opa", genesOFF = "Cad", startStates = start.states, method = "chosen")
+
+#png(paste("attractors/dros_state_graph", "7",".png", sep=""), width = w, height = h)
+
+plotStateGraph(attr.start.states, drawLegend = FALSE)
+
+#dev.off()
+```
+
+```{r}
+for (i in c(1:7)){
+  plotSequence(dros_network, startState = start.states[[i]])
+  }
+
+
+```
+
+
+
+The state graph of this plot is much simpler: there is one (or in the case of attractor 2, two) paths to each attractor, and each attractor is reached. The path lengths also look much shorter here. 
+
+This *is* specific to the provided inputs, not just the act of applying an input. Any random 7 starting positions tends to give a smaller number of attractors. 
+
+```{r, eval=FALSE}}
+num.attractors <- c()
+
+
+for (i in 1:100000){
+  random.attr <- getAttractors(dros_network, genesON="Opa", genesOFF = c("Cad", "En"), startStates = 7, method = "random")
+#plotStateGraph(random.attr)
+  num.attractors = c(num.attractors, length(random.attr$attractors))
+}
+
+```
+
+```{r, eval=FALSE}
+
+#png(paste("attractors/hist", ".png", sep=""), width = w, height = h)
+
+mean(num.attractors)
+sd(num.attractors)
+
+h = hist(num.attractors,
+    breaks = seq(0,8,1))
+
+h$density = h$counts/sum(h$counts)*100
+#par(oma = c(0,0,0,0))
+plot(h,freq=FALSE,
+     xlab = "Number of attractors",
+     ylab = "Percentage",
+     main = "Number of attractors from seven random inputs",
+     font.main=1)
+
+#axis(1, tck=0.01, font=1)
+
+#dev.off()
+
+```
+
+
+
+At 30 attractors, you tend to get most of the attractors. (run this and the above code multiple times to get the full picture.) (TODO: work out Pr of getting 7 attractors with any number of start states.) 
+
+```{r}
+random.attr <- getAttractors(dros_network, genesON="Opa", genesOFF = c("Cad", "En"), startStates = 30, method = "random")
+plotStateGraph(random.attr)
+# random.attr <- getAttractors(dros_network, genesON="Opa", genesOFF = c("Cad", "En"), startStates = 30, method = "random")
+# plotStateGraph(random.attr)
+# random.attr <- getAttractors(dros_network, genesON="Opa", genesOFF = c("Cad", "En"), startStates = 30, method = "random")
+# plotStateGraph(random.attr)
+```
+
+This illustrates a few things. We knew that the ordering of the inputs to this late network must be important in producing the specific ordering of attractor/steady states/cells producing particular sets of gene expression. This analysis further reveals that these particular initial conditions are required to produce the correct number of outputs/steady states- if we want 6 different cell specifications / combinations of transcription factors, we need very particular initial conditions. 
+
+##  Nasonia inputs? 
+
+What happens if we remove prd and slp from the initial conditions - as in Nasonia? 
+
+We are unable to obtain the correct number of regulatory outputs. 
+
+Thus, prd and slp are necessary inputs to get the correct stable states / outputs from the network. 
+
+This also means that no amount of simulation will be able to get the Drosophila network output from the Nasonia inputs. We will need to either posit other regulators (ie, for example, e75a), or rewire the late network (or both). 
+
+
+```{r}
+#Genes are encoded in the following order: 
+#G1 Hairy Opa Eve G2 Runt Odd Ftz Prd Slp En Cad 
+nvit.start.states = list(
+  "011000110000", #Hairy Opa Odd Ftz Prd Slp 
+  "011000000000", #Hairy Prd Slp
+  "011100000000", #Hairy Eve Prd Slp
+  "001100000100", #Eve slp (nvit)
+  "001001000000", #Runt
+  "001001110000", #Runt Odd Ftz Prd
+  "001000110000"  #Odd Ftz Prd
+)
+
+f <- function(s) {
+  list(as.numeric(unlist(strsplit(s, "" ))))
+  }
+nvit.start.states <- sapply(nvit.start.states, f)
+#start.states <- generateRandomStartStates(net, 2)
+
+nvit.attr <- getAttractors(dros_network, genesON="Opa", genesOFF = "Cad", startStates = nvit.start.states, method = "chosen")
+
+
+
+#png(paste("attractors/nvit", ".png", sep=""), width = w, height = h)
+plotStateGraph(nvit.attr, drawLegend = FALSE)
+#dev.off()
+
+
+
+plotAttractors(nvit.attr)
+
+
+
+# attr.random <- getAttractors(dros_network, genesON="Opa", genesOFF = "Cad", method = 
+#                                "random", startStates = 30)
+# plotStateGraph(attr.random)
+
+```
+
+```{r fig.height = 5, fig.width=4}
+for (i in c(1:7)){
+  png(paste("attractors/nvit_attr_", i, ".png", sep=""), width = 200, height = 600)
+
+  plotSequence(dros_network, startState = nvit.start.states[[i]], 
+               onColor = "darkgrey", offColor = "white", 
+               drawLegend = FALSE, 
+               title = paste("Attractor", i), 
+               attractor.sep.col = "red")
+
+    #dev.copy(png, paste("attractors/nvit_attr_", i, ".png", sep=""))
+  dev.off()
+  }
+
+
+```
+
+```{r fig.height = 5, fig.width=4}
+plotSequence(dros_network, startState = nvit.start.states[[i]], onColor = "darkgrey", offColor = "white", drawLegend = FALSE, title = paste("Attractor", i), attractor.sep.col = "red")
+
+
+
+```
+
+
+
+# Conclusions 
+
+This illustrates some important points about how the structure of the network, and its function, interact. 
+
+Firstly, the *Drosophila* network does not sample all possible stable states. Two states are not reached by the network: Ftz-Prd-En, and the two-state attractor involving *Prd*. Thus, input parameters control which attractors are reached, and so the output of the network. 
+
+Secondly, reducing the number of input states constrains the possible paths - as could be imagined. Random inputs tend to give a smaller number of attractors, with branching structure (QUANTIFY THIS). The *Drosophila* inputs gives straight paths, with a high input : unique output ratio. 
+
+Together, these findings illustrate the critical impact of inital conditions to the network. Though these attractors are stable, and so likely resemble more Davidson's differentiation gene batteries, rather than networks with complex dynamic(al?) behaviour, the intial conditions are still crucial, and established by a oscillatory early network. 
+
+Finally, the *Nasonia* initial conditions - without prd and slp - are unable to recapitulate the *Drosophila* attractors. Thus the Dros late network cannot recapituate Nasonia expression without some modifications. 
+
+This analysis of network structure was informative: we found that the stable states are simple attractors for example - they do not exhibit complex behaviours. 
+
+```{r}
+#Genes are encoded in the following order: 
+#G1 Hairy Opa Eve G2 Runt Odd Ftz Prd Slp En Cad 
+start.states.small = list(
+  "0011110", #Hairy Opa Odd Ftz Prd Slp 
+  "0000110", #Hairy Prd Slp
+  "1000110", #Hairy Eve Prd Slp
+  "1000000", #Eve
+  "0100000", #Runt
+  "0111100", #Runt Odd Ftz Prd
+  "0011100"  #Odd Ftz Prd
+)
+
+start.states.small <- sapply(start.states.small, f)
+
+
+minimal_net <- loadNetwork("late_network_simple")
+dros_simple_attractors <- getAttractors(minimal_net, method = "chosen", startStates = start.states.small)
+#dros_simple_attractors <- getAttractors(minimal_net)
+plotNetworkWiring(minimal_net)
+#plotNetworkWiring(dros_network)
+plotAttractors(dros_simple_attractors)
+plotStateGraph(dros_simple_attractors)
+
+start = list(as.numeric(unlist(strsplit("0100010", "" ))))
+
+plotSequence(minimal_net, startState = start[[1]])
+```
+
+
+
+```{r}
+for (i in c(1:7)){
+  seq <- plotSequence(minimal_net, startState = start.states.small[[i]])
+  # dev.copy(png, paste("attractors/dros_attr_", i, ".png", sep=""))
+  # dev.off()
+  }
+
+
+```
+
+
+```{r fig.height = 5, fig.width=2.5}
+for (i in c(1:7)){
+png(paste("attractors/dros_attr_", i, ".png", sep=""), width = 200, height = 600)
+  plotSequence(dros_network, startState = start.states[[i]], 
+               onColor = "darkgrey", offColor = "white", 
+               drawLegend = FALSE, 
+               title = paste("Attractor", i), 
+               attractor.sep.col = "red", 
+               eps=0)
+    #dev.copy(png, paste("attractors/dros_attr_", i, ".png", sep=""))
+  dev.off()
+  }
+
+
+```
+
+
+
+<!-- # Early network  -->
+
+<!-- The early network is unfortunate... we only arrive at a 4-state attractor, not the 8-state one required. I don't know why.  -->
+
+
+
+<!-- with gap inputs:  -->
+
+<!-- allowed states are:  -->
+<!-- g1 G2 -->
+<!-- g1 g2 -->
+<!-- G1 g2  -->
+<!-- G1 G2  -->
+
+<!-- ```{r} -->
+<!-- early.start.states <- list( -->
+<!--   "10000000100000", -->
+<!--   "10100000000000",  -->
+<!--   "00100000100000",  -->
+<!--   "00000001100000" -->
+<!-- ) -->
+
+<!-- early.start.states <- sapply(early.start.states, f) -->
+
+<!-- early_restricted_attr <- getAttractors(early_network, startStates = early.start.states) -->
+<!-- plotAttractors(early_restricted_attr) -->
+<!-- ``` -->
+
+```{r}
+#plotStateGraph(early_restricted_attr)
+```
+

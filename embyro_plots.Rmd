@@ -1,0 +1,242 @@
+---
+title: "R Notebook"
+output: html_notebook
+fig_width: 6 
+fig_height: 4 
+---
+
+
+```{r echo=FALSE}
+knitr::opts_chunk$set(fig.width=12, fig.height=8) 
+library("ggplot2")
+library("xml2")
+library("viridis")
+library("patchwork")
+library("data.table")
+```
+
+```{r}
+###########
+#FUNCTIONS#
+###########
+
+extract_detections <- function(detection){
+  data <- data.frame(nTrack=1, #i is a vector apparently 
+                     t=as.numeric(attributes(detection)$t), 
+                     x=as.numeric(attributes(detection)$x), 
+                     y=as.numeric(attributes(detection)$y), 
+                     z=as.numeric(attributes(detection)$z)
+  )
+  #data$nTrack <- 1 #um
+  return(data)
+  }
+
+extract_particles <- function(particle){
+  detections <- as_list(xml_children(particle))
+  tracks.list <- lapply(detections, extract_detections)
+  tracks.df <- data.frame(matrix(unlist(tracks.list), nrow=length(tracks.list), byrow=T))
+  names(tracks.df) <- c("nTrack", "t", "x", "y", "z")
+  tracks.df$nTrack <- 1 #particle index 
+  return(tracks.df)
+}
+
+get_displacement <- function(tracks, max_timepoint, min_timepoint=0){
+  #TODO work out custom min_timepoints
+  if((max_timepoint %in% tracks$t)&&min_timepoint %in% tracks$t){
+    tmp <- tracks[tracks$t==min(tracks$t),]-tracks[tracks$t==max_timepoint,]
+    names(tmp) <- c("nTrack", "num_frames", "delta_x", "delta_y", "z") 
+    cbind(tmp, tracks[tracks$t==min_timepoint,])
+  }
+}
+
+initial_processing <- function(file){ 
+  x <- read_xml(file)
+  particle_list <- as.list(xml_children(x))
+all_tracks_list <- lapply(particle_list, extract_particles)
+all_tracks <- rbindlist(all_tracks_list, idcol=TRUE)
+return (list(all_tracks_list, all_tracks))
+}
+
+calculate_displacement<- function(all_tracks_list, t_initial, t_final){
+#get displacement between t_initial and t_final
+displacement_list <- lapply(all_tracks_list, FUN = get_displacement, max_timepoint=t_final, min_timepoint=t_initial)
+displacement_df <- rbindlist(displacement_list, idcol=TRUE)
+#remove empty columns 
+displacement_df$nTrack <- NULL
+displacement_df$z <- NULL
+
+return (displacement_df)
+  }
+
+```
+
+```{r}
+########
+#INPUTS#
+########
+
+x <- read_xml("../data/G002_no_jitter_rotated_Tracks.xml")
+
+########
+#SCRIPT#
+########
+
+
+particle_list <- as.list(xml_children(x))
+
+all_tracks_list <- lapply(particle_list, extract_particles)
+all_tracks <- rbindlist(all_tracks_list, idcol=TRUE)
+
+#get displacement between t=0 and t=36
+displacement_list <- lapply(all_tracks_list, FUN = get_displacement, max_timepoint=36)
+displacement_df <- rbindlist(displacement_list, idcol=TRUE)
+
+#displacement_df <- displacement_df[abs(displacement_df$t)>=10,]#get rid of small paths
+
+#remove empty columns 
+displacement_df$nTrack <- NULL
+displacement_df$z <- NULL
+
+
+```
+
+Data exploration! 
+
+This is embryo GOO2. Imaging started just after the final nuclear cycle. 
+
+Data shows the start of imaging until frame 36- where the embryo starts to contract and it looks like gastrulation begins. 
+
+I'm interested in quantifying the total movement of cells, and how this shifts throughout the embryo. This is because Matt noticed a forwards shift in cells between nc14 and gastrulation. I am looking at the whole embryo, rather than using maunual tracking, because I noticed diffences in the anterior and posterior of another embryo, so a global look at cell movements is useful. 
+
+To quantify shifts, I used cell x and y co-ordinates at the beginning and end of the time points I was interested in. $\Delta x = \frac {x_{final}}{x_{initial}}$ and $\Delta y = \frac {y_{final}}{y_{initial}}$. This obscures any non-linearity cell trajectories no might not be the best measure but it is simple. The initial frame was 0 and the final was 36, so only cells tracked for those full 36 frames are included. Points represent initial cell positions (at t=0). 
+
+Cells are shifting up to $8\mu m$ anteriorally throughout the anterior 2/3 of the embryo. Throughout the whole embryo, the mean shift is ```r round(mean(displacement_df$delta_x), digits = 1)```$\pm$```r round(sd(displacement_df$delta_x), digits = 1)``` $\mu m$ : a cell nucleus is $\sim 4 \mu m$. So this is a sizeable shift. (Red represents an anterior shift). 
+
+Dorso-ventrally, blue represents a ventral shift and red represents a dorsal shift. 
+
+So there are large, and obvious, cell shifts in the middle of nc14. Pretty much all of the "early" phase of segmentation occurs before gastrulation (ie wingless stripe 2 doesn't appear until just before gastrulation). So any cell movements here are very important! What is not clear is whether the cells have cellularised at this time, and the implications of this for patterning. If most of cell movement is happening when the cells have already cellularised, the cells are not moving through the eve stripes, so we only need to quantify the total shift so we can correct for cell movement when looking for forwards shifts of eve stripes. 
+
+REWRITE THIS CODE 
+
+```{r fig1, fig.width = 10}
+#######
+#PLOTS#
+#######
+
+cols = rainbow(100, s=.6, v=.9)[sample(1:26,26)]
+
+#all_tracks$.id <- as.character(all_tracks$.id)
+
+plot_formatting <- list(scale_fill_gradient2(midpoint=0, low="blue", mid="white",high="red"), 
+                   coord_fixed(ratio = 1, xlim = NULL, ylim = NULL, expand = TRUE,
+                               clip = "on"), 
+                     theme_void(), 
+                   theme(plot.title = element_text(hjust = 0.5)), 
+                     labs(fill = "Total shift (\u03BCm)"), 
+                     scale_y_reverse()#, 
+                   #geom_path(data=outline, aes(x=X, y = Y))
+                   )
+
+ap <- ggplot() + 
+  geom_point(data=displacement_df, aes(x=x, y=y, fill = delta_x), 
+             colour = "black", pch = 21, size = 2) + 
+  ggtitle("Anterior-posterior shift") + 
+   #geom_path(data=outline, aes(x=X, y = Y)) + 
+  plot_formatting
+
+dv <- ggplot() + 
+  geom_point(data=displacement_df, aes(x=x, y=y, fill = delta_y), 
+             colour = "black", pch = 21, size = 2) + 
+  ggtitle("Dorsal-ventral shift") + 
+  #geom_path(data=outline, aes(x=X, y = Y)) + 
+  plot_formatting
+
+(tracks <- ggplot() + 
+  geom_path(data = all_tracks[all_tracks$t<=36,], 
+            aes(x=x, y=y, color = .id, group = .id, fill = .id), 
+            #color = "black", 
+            alpha = 0.5) + 
+  plot_formatting + 
+  ggtitle("All tracks") + 
+  #theme(legend.position = "none") + 
+  #scale_color_gradientn(colours = rainbow(5))+
+  #labs(color = "Time-point") + 
+  geom_point(data=all_tracks[all_tracks$t==0,], 
+             aes(x=x, y=y, 
+                 fill = .id, color = .id), 
+             #color = "black", 
+             size =1, 
+             alpha = 0.5)+ 
+    scale_color_gradientn(colors=c("#89C5DA", "#DA5724", "#74D944", "#CE50CA", "#3F4921", "#C0717C", "#CBD588", "#5F7FC7", 
+"#673770", "#D3D93E", "#38333E", "#508578", "#D7C1B1", "#689030", "#AD6F3B", "#CD9BCD", 
+"#D14285", "#6DDE88", "#652926", "#7FDCC0", "#C84248", "#8569D5", "#5E738F", "#D1A33D", 
+"#8A7C64", "#599861")) #https://stackoverflow.com/questions/21352683/randomising-qualitative-colours-for-large-sets-in-ggplot
+  + theme(legend.position = "none") 
+)
+
+(ap / dv / tracks)
+ggsave("../graphs/G002_final.png", dpi="print")
+
+getwd()
+
+```
+
+
+```{r}
+G003_full <- initial_processing("../data/G003_no_jitter_rotated_Tracks.xml")
+
+G003_tracks <- G003_full[2]
+
+G003_displacement <- calculate_displacement(G003_full[[1]], t_final=40, t_initial = 13)
+
+```
+
+```{r}
+ap3 <- ggplot() + 
+  geom_point(data=G003_displacement, aes(x=x, y=y, fill = delta_x), 
+             colour = "black", pch = 21, size = 2) + 
+  ggtitle("Anterior-posterior shift") + 
+   #geom_path(data=outline, aes(x=X, y = Y)) + 
+  plot_formatting
+
+dv3 <- ggplot() + 
+  geom_point(data=G003_displacement, aes(x=x, y=y, fill = delta_y), 
+             colour = "black", pch = 21, size = 2) + 
+  ggtitle("Dorsal-ventral shift") + 
+  #geom_path(data=outline, aes(x=X, y = Y)) + 
+  plot_formatting
+
+(tracks3 <- ggplot() +
+  geom_path(data = all_tracks[all_tracks$t<=40,],
+            aes(x=x, y=y, color = .id, group = .id),
+            alpha = 0.5) +
+  plot_formatting +
+  ggtitle("All tracks") +
+  #theme(legend.position = "none") +
+  #scale_color_gradientn(colours = rainbow(5))+
+  #labs(color = "Time-point") +
+  geom_point(data=all_tracks[all_tracks$t==0,],
+             aes(x=x, y=y, fill = .id, color = .id),
+             size =1,
+             alpha = 0.5) + 
+      scale_color_gradientn(colors=c("#89C5DA", "#DA5724", "#74D944", "#CE50CA", "#3F4921", "#C0717C", "#CBD588", "#5F7FC7", 
+"#673770", "#D3D93E", "#38333E", "#508578", "#D7C1B1", "#689030", "#AD6F3B", "#CD9BCD", 
+"#D14285", "#6DDE88", "#652926", "#7FDCC0", "#C84248", "#8569D5", "#5E738F", "#D1A33D", 
+"#8A7C64", "#599861")) + #https://stackoverflow.com/questions/21352683/randomising-qualitative-colours-for-large-sets-in-ggplot
+  theme(legend.position = "none"))
+
+(ap3 / dv3 / tracks3)
+
+ggsave("../graphs/G003_final.png", dpi="print")
+
+ggsave("../graphs/G003_final_ap.png", ap3, dpi="print", 
+       width = 200, height = 70, units = "mm")
+ggsave("../graphs/G003_final_dv.png", dv3, dpi="print", 
+       width = 200, height = 70, units = "mm")
+ggsave("../graphs/G003_final_tracks.png", tracks3, dpi="print", 
+       width = 200, height = 70, units = "mm")
+
+
+
+```
+
