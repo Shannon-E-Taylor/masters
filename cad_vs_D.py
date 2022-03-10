@@ -1,5 +1,3 @@
-## This simulation corresponds to Simulation 10 in S2 Text (see also S10 Movie and Fig 2B)
-
 # Import helper functions
 from S1_File import *
 from networks import *
